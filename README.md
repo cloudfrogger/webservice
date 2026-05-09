@@ -1,95 +1,57 @@
 # webservice
 
-Webservice scaffold for use with openapi generated apis.
+A production-ready web service scaffold for OpenAPI-generated REST APIs in Go.
 
 ```bash
 go get github.com/cloudfrogger/webservice
 ```
 
-Features:
+## Features
 
-- HTTP Authentication schemas from declaration
+- HTTP authentication schemas from OpenAPI specifications
 - Swagger UI generation
-- CORS
-- Request Throttle / Ratelimiter can be configured
-- Jaeger Tracing for endpoints
-- Proxy-Protocol and Cloudflare Source IP are provided in context
-- Rolevalidation from specification
-- Correlation Injector compatible with cloudflare
+- CORS support
+- Request throttling and rate limiting
+- Jaeger distributed tracing
+- Proxy Protocol and Cloudflare source IP handling
+- Role-based access control validation
+- Correlation ID injection for Cloudflare compatibility
 
-## How to use
+## Quick Start
 
-### 1. Create a hello-world spec and generate the api
-```
-openapi: 3.0.0
-info:
-  title: Hello World API
-  version: 1.0.0
-  description: A simple test API
-servers:
-  - url: http://localhost:8000
-paths:
-  /hello:
-    get:
-      summary: Returns a hello world message
-      operationId: getHello
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Hello, World!
-```
-then: 
-```shell
-oapi-codegen -config openapi/v1-config.yaml openapi/v1-api.yaml
-```
-
-### 4. Main program
-```golang
-import github.com/cloudfrogger/webservice
-
-type handler struct {
-}
-
-func NewV1() v1.ServerInterface {
-	return &handler{}
-}
-
-func (h *handler) GetHello(ctx echo.Context) error {
-	return ctx.String(200, "Hello Webservice !")
-}
-
-func main() {
-    err := webservice.NewWebServer("Example Server").
-        RegisterHandler(func(e *echo.Echo) {
-			v1.RegisterHandlers(e, NewV1())
-		}).Run(8080)
-}
-```
-
-And voila, ready to run
-```
-go run cmd/main.go
-```
-Test it by opening you browser on `http://localhost:8080/hello`
-
-## Quick start from zero
-
-Install openapi codegenerator cli
-
+### 1. Install openapi keygen
 ```
 npm install @openapitools/openapi-generator-cli -g
 ```
 
-Have your v1-api.yaml with OAS2 and a config in the projects openapi folder next to v1-config.yaml like so :
+### 2. Define Your API
 
-```bash
+Create an OpenAPI 3.0.0 specification (`openapi/v1-api.yaml`):
+
+```yaml
+openapi: 3.0.0
+info:
+	title: Hello World API
+	version: 1.0.0
+servers:
+	- url: http://localhost:8000
+paths:
+	/hello:
+		get:
+			operationId: getHello
+			responses:
+				'200':
+					description: Success
+					content:
+						application/json:
+							schema:
+								type: object
+								properties:
+									message:
+										type: string
+```
+### 3. Configure the generator
+```yaml
 package: v1
 output: api/v1/api.gen.go
 
@@ -102,13 +64,56 @@ output-options:
   nullable-type: true
 ```
 
-Generate the api
+### 4. Generate API Code
 
-```
+```bash
 oapi-codegen -config openapi/v1-config.yaml openapi/v1-api.yaml
 ```
 
-## Example use
+### 3. Minimal main.go
+Serve the hello world service on 8080:
+
+```go
+import "github.com/cloudfrogger/webservice"
+
+type handler struct{}
+
+func (h *handler) GetHello(ctx echo.Context) error {
+		return ctx.JSON(200, map[string]string{"message": "Hello, World!"})
+}
+
+func main() {
+		webservice.NewWebServer("My API").
+				RegisterHandler(func(e *echo.Echo) {
+						v1.RegisterHandlers(e, &handler{})
+				}).
+				Run(8080)
+}
+```
+### 4. Test it it works
+Run with: `go run cmd/main.go` and visit `http://localhost:8080/hello`
+
+## Configuration Example
+
+```go
+builder := webservice.NewWebServer("My Service").
+		WithLogger(logger).
+		WithCache(redis).
+		WithPrometheus(true).
+		WithAuthentication(oidcURL, oidcURL).
+		ThrottleRequests(100, 10*time.Minute).
+		AllowOrigins("*").
+		UseOpenAPISpecs("/v1", "openapi/v1-api.yaml", "API v1").
+		WithSwagger(true).
+		RegisterHandler(func(e *echo.Echo) {
+				v1.RegisterHandlers(e, handlers.New())
+		}).
+		Run(8080)
+```
+
+
+
+## A more complete example
 
 ```golang
 	builder := webservice.NewWebServer(APPLICATION_NAME).
