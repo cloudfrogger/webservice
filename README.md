@@ -1,6 +1,8 @@
 # webservice
 
-A production-ready web service scaffold for OpenAPI-generated REST APIs in Go.
+A production-ready web service scaffold for OpenAPI-generated REST APIs in Go, cloudfrogger style. This
+Lib just wraps echo, redis, jaeger clients to save time in setting up projects. The lib is intended
+to be used in production.
 
 ```bash
 go get github.com/cloudfrogger/webservice
