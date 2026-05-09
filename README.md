@@ -1,182 +1,264 @@
 # webservice
 
-A production-ready web service scaffold for OpenAPI-generated REST APIs in Go, cloudfrogger style. This
-Lib just wraps echo, redis, jaeger clients to save time in setting up projects. The lib is intended
-to be used in production.
+`webservice` is a small production-oriented scaffold for Go HTTP APIs built on top of [Echo](https://github.com/labstack/echo), OpenAPI, and a pragmatic middleware stack.
+
+It is designed for services that already use generated OpenAPI handlers and want the repetitive platform wiring handled consistently:
+
+- OpenAPI request validation
+- JWT and API key authentication hooks
+- Swagger UI and spec publishing
+- CORS handling
+- Prometheus metrics
+- request correlation and structured logging
+- source IP extraction behind Cloudflare or other proxies
+- optional rate limiting
+- optional OpenTelemetry tracing
+- optional role validation from OpenAPI extensions
+
+## Requirements
+
+- Go `1.26+`
+- an OpenAPI 3 specification if you want request validation and generated handlers
+
+Install the package with:
 
 ```bash
 go get github.com/cloudfrogger/webservice
 ```
 
-## Features
+## What The Package Does
 
-- HTTP authentication schemas from OpenAPI specifications
-- Swagger UI generation
-- CORS support
-- Request throttling and rate limiting
-- Jaeger distributed tracing
-- Proxy Protocol and Cloudflare source IP handling
-- Role-based access control validation
-- Correlation ID injection for Cloudflare compatibility
+`NewWebServer()` returns an `APIBuilder` that wires a standard Echo server with the middleware used by this package.
+
+By default the server includes:
+
+- correlation ID handling
+- source IP extraction
+- structured request logging
+- CORS middleware
+- Swagger UI at `/swagger`
+- Prometheus metrics at `/metrics`
+
+You opt into additional behavior by chaining builder methods such as `UseOpenAPISpecs`, `WithAuthentication`, `ThrottleRequests`, or `WithOpenTelemetry`.
 
 ## Quick Start
 
-### 1. Install openapi keygen
-```
-npm install @openapitools/openapi-generator-cli -g
+### 1. Generate Echo handlers from OpenAPI
+
+This package is intended to work well with `oapi-codegen`.
+
+Install it with:
+
+```bash
+go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
 ```
 
-### 2. Define Your API
-
-Create an OpenAPI 3.0.0 specification (`openapi/v1-api.yaml`):
+Create an OpenAPI spec, for example `openapi/v1.yaml`:
 
 ```yaml
-openapi: 3.0.0
+openapi: 3.0.3
 info:
-	title: Hello World API
-	version: 1.0.0
-servers:
-	- url: http://localhost:8000
+  title: Hello API
+  version: 1.0.0
 paths:
-	/hello:
-		get:
-			operationId: getHello
-			responses:
-				'200':
-					description: Success
-					content:
-						application/json:
-							schema:
-								type: object
-								properties:
-									message:
-										type: string
+  /hello:
+    get:
+      operationId: getHello
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
 ```
-### 3. Configure the generator
-```yaml
-package: v1
-output: api/v1/api.gen.go
 
+Create an `oapi-codegen` config such as `openapi/v1.codegen.yaml`:
+
+```yaml
+package: apiv1
+output: internal/apiv1/api.gen.go
 generate:
   echo-server: true
   models: true
   embedded-spec: true
-
-output-options:
-  nullable-type: true
 ```
 
-### 4. Generate API Code
+Generate the code:
 
 ```bash
-oapi-codegen -config openapi/v1-config.yaml openapi/v1-api.yaml
+oapi-codegen -config openapi/v1.codegen.yaml openapi/v1.yaml
 ```
 
-### 3. Minimal main.go
-Serve the hello world service on 8080:
+### 2. Start a service
 
 ```go
-import "github.com/cloudfrogger/webservice"
+package main
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/cloudfrogger/webservice"
+	"your/module/internal/apiv1"
+)
 
 type handler struct{}
 
-func (h *handler) GetHello(ctx echo.Context) error {
-		return ctx.JSON(200, map[string]string{"message": "Hello, World!"})
+func (h *handler) GetHello(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"message": "Hello, World!"})
 }
 
 func main() {
-		webservice.NewWebServer("My API").
-				RegisterHandler(func(e *echo.Echo) {
-						v1.RegisterHandlers(e, &handler{})
-				}).
-				Run(8080)
-}
-```
-### 4. Test it it works
-Run with: `go run cmd/main.go` and visit `http://localhost:8080/hello`
-
-## Configuration Example
-
-```go
-builder := webservice.NewWebServer("My Service").
-		WithLogger(logger).
-		WithCache(redis).
-		WithPrometheus(true).
-		WithAuthentication(oidcURL, oidcURL).
-		ThrottleRequests(100, 10*time.Minute).
-		AllowOrigins("*").
-		UseOpenAPISpecs("/v1", "openapi/v1-api.yaml", "API v1").
-		WithSwagger(true).
+	err := webservice.NewWebServer("hello-api").
+		UseOpenAPISpecs("/v1", "openapi/v1.yaml", "v1.yaml").
 		RegisterHandler(func(e *echo.Echo) {
-				v1.RegisterHandlers(e, handlers.New())
+			apiv1.RegisterHandlers(e, &handler{})
 		}).
 		Run(8080)
-```
-
-
-
-## A more complete example
-
-```golang
-	builder := webservice.NewWebServer(APPLICATION_NAME).
-		WithLogger(log.Logger).
-		WithCache(redisClient).
-		WithPrometheus(config.Prometheus.Enable).
-		WithAuthentication(config.OIDC.BaseURL, config.OIDC.BaseURL).
-		ErrorHandler(func(err error, c echo.Context) {
-			log.Debug().Err(err).Msg("An error occurred while processing the request")
-			//-- custom error handler to log errors
-			c.Logger().Error(err)
-		}).
-		CustomAPITokenValidation(func(ctx context.Context, apiToken, sourceIP string) (email string, firstname string, lastname string, valid bool) {
-			// use this to validate API tokens for service accounts
-			return "", "", "", false
-		}).
-		ThrottleRequests(config.RequestThrottle, 10*time.Minute).
-		AllowOrigins(config.PermittedOrigins...).
-		AllowMethods(config.PermittedMethods...).
-		AllowHeaders(config.PermittedHeaders...).
-		ClearServers().
-		//AddServerIf(config.LocalEnvironment, "http://localhost:5400/v1").
-		//AddServerIf(!config.LocalEnvironment, config.APIBaseURL).
-		UseOpenAPISpecs("/v1", "openapi/v1-api.yaml", "Some api defintion API v1").
-		WithSwagger(true).
-		RegisterHandler(func(e *echo.Echo) {
-			v1.RegisterHandlers(e, handlers.NewHandlerV1(
-				chatService,
-				config.Bot.APIToken,
-			))
-		}).
-		CustomGET("/", func(ctx echo.Context) error {
-			// A small mainpage in case a developer  opens the API in a browser
-			return ctx.String(200, "ToDo: Edit me!")
-		}).
-		OnEveryCall(func(next echo.HandlerFunc) echo.HandlerFunc {
-			return func(ctx echo.Context) error {
-				if emailValue := ctx.Get(api.ContextKey_UserEmail); emailValue != nil {
-					firstName := ""
-					lastName := ""
-					if ctx.Get(api.ContextKey_GivenName) != nil {
-						firstName = ctx.Get(api.ContextKey_GivenName).(string)
-					}
-					if ctx.Get(api.ContextKey_FamilyName) != nil {
-						lastName = ctx.Get(api.ContextKey_FamilyName).(string)
-					}
-					if _, err := chatService.EnsureUser(ctx.Request().Context(), emailValue.(string), firstName, lastName); err != nil {
-						log.Warn().Err(err).Msg("Failed to synchronize authenticated user")
-					}
-				}
-				return next(ctx)
-			}
-		})
-
-	if config.OpenTelemetry.Enable {
-		builder = builder.WithOpenTelemetry()
-	}
-
-	err = builder.Run(config.APIPort)
 
 	if err != nil {
-		log.Error().Err(err).Msg("Exit")
+		panic(err)
 	}
+}
 ```
+
+### 3. Verify the runtime endpoints
+
+With the example above running:
+
+- `GET /hello` serves your handler
+- `GET /swagger` serves Swagger UI
+- `GET /swagger/v1.yaml` serves the YAML spec
+- `GET /swagger/v1.json` serves the JSON version of the spec
+- `GET /metrics` serves Prometheus metrics
+
+## Common Configuration
+
+```go
+builder := webservice.NewWebServer("my-service").
+	WithLogger(logger).
+	WithCache(redisClient).
+	WithPrometheus(true).
+	WithSwagger(true).
+	WithAuthentication(oidcBaseURL, loginOIDCBaseURL).
+	ThrottleRequests(100, 10*time.Minute).
+	AllowOrigins("https://app.example.com").
+	AllowMethods(http.MethodGet, http.MethodPost, http.MethodOptions).
+	AllowHeaders("Authorization", "Content-Type", "ClientId").
+	UseOpenAPISpecs("/v1", "openapi/v1.yaml", "v1.yaml").
+	RegisterHandler(func(e *echo.Echo) {
+		apiv1.RegisterHandlers(e, handlers.New())
+	})
+
+if enableTracing {
+	builder = builder.WithOpenTelemetry()
+}
+
+if err := builder.Run(8080); err != nil {
+	logger.Fatal().Err(err).Msg("server stopped")
+}
+```
+
+## Builder Overview
+
+The main builder methods are:
+
+- `UseOpenAPISpecs(basePath, specPath, publicName)` registers an OpenAPI document, publishes it in Swagger, and enables request validation for matching routes.
+- `PublicAPI(basePath, specPath, publicName)` is like `UseOpenAPISpecs`, but keeps only operations marked with `x-public: true`.
+- `RegisterHandler(func(*echo.Echo))` registers your generated handlers or custom routes.
+- `WithAuthentication(oidcBaseURL, loginOIDCBaseURL)` enables JWT validation using OIDC discovery.
+- `CustomAPITokenValidation(func)` adds support for custom API key validation.
+- `WithRoleValidation(true)` enforces `x-roles` OpenAPI extensions after authentication.
+- `ThrottleRequests(limit, window)` enables per-source-IP rate limiting.
+- `AllowOrigins`, `AllowMethods`, `AllowHeaders` configure CORS.
+- `WithSwagger(bool)` enables or disables Swagger UI and published spec endpoints.
+- `WithPrometheus(bool)` enables or disables `/metrics`.
+- `WithOpenTelemetry()` enables Echo OpenTelemetry middleware. Your application is still responsible for configuring the global OTel provider.
+- `OnEveryCall(middleware)` appends your own Echo middleware.
+- `CustomGET(path, handler)` is a convenience for adding simple routes such as `/`.
+- `ErrorHandler(func)` lets you run custom logic before Echo's default HTTP error handler.
+
+## Behavioral Notes
+
+### CORS
+
+- Default allowed origins: `*`
+- Default allowed methods: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`
+- If the effective CORS origin is `*`, credentials are disabled to keep browser behavior valid
+- Preflight `OPTIONS` requests are handled before OpenAPI auth/validation middleware
+
+### Source IP Handling
+
+The source IP middleware uses this precedence:
+
+1. `CF-Connecting-IP`
+2. `X-Forwarded-For`
+3. `RemoteAddr`
+
+The final value is stored in the Echo context under `source_ip`.
+
+### Correlation IDs
+
+The correlation middleware uses this precedence:
+
+1. `CF-RAY`
+2. `X-CORRELATION-ID`
+3. generated ID
+
+The selected value is exposed in the response header `X-CORRELATION-ID` and in the Echo context as `correlation_id`.
+
+### Rate Limiting
+
+- Rate limiting is disabled until `ThrottleRequests()` is configured
+- Limiting is keyed by the resolved source IP
+- If a Redis client is configured, Redis is used
+- Otherwise, an in-memory limiter is used
+
+### Authentication And Validation
+
+- Request validation is applied only for routes whose path matches the `basePath` of a registered spec
+- If an OpenAPI operation has no security requirements, authentication is skipped
+- Browser preflight requests are skipped by the auth and validator middleware
+- Custom API key validation receives the request context, API token, and resolved source IP
+
+## Public API Filtering
+
+`PublicAPI()` is useful when you want to publish only a subset of a larger spec. Operations without `x-public: true` are removed from the served document.
+
+Example:
+
+```yaml
+paths:
+  /status:
+    get:
+      x-public: true
+      operationId: getStatus
+      responses:
+        "200":
+          description: OK
+  /internal/jobs:
+    get:
+      operationId: listJobs
+      responses:
+        "200":
+          description: OK
+```
+
+With `PublicAPI(...)`, only `/status` remains in the published spec.
+
+## Testing
+
+Run the package test suite with:
+
+```bash
+go test ./...
+```
+
+## Scope
+
+This package is intentionally opinionated. It is a good fit when you want a consistent service bootstrap around Echo and OpenAPI without rebuilding the same middleware chain in every project.

@@ -44,7 +44,7 @@ func (b *APIBuilder) WithLogger(logger zerolog.Logger) *APIBuilder {
 	return b
 }
 
-// -- if set a middleware will keep pushing metrics trhu otoel collector
+// -- if set a middleware will keep pushing metrics thru otel collector
 // -- in order for this to work the collector needs to be initialized in main
 func (b *APIBuilder) WithOpenTelemetry() *APIBuilder {
 	b.enableOpenTelemetry = true
