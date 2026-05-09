@@ -35,7 +35,7 @@ func TestSwaggerExactSpecRouteWinsOverWildcard(t *testing.T) {
 }
 
 func TestSwaggerRootServesUIWithoutRedirect(t *testing.T) {
-	builder := WebServer("test")
+	builder := NewWebServer("test")
 	builder.registerSwaggerUIRoutes()
 
 	req := httptest.NewRequest(http.MethodGet, "/swagger?urls.primaryName=API%20v1", nil)
@@ -84,7 +84,7 @@ func TestUseOpenAPISpecsFindsSpecFromParentDirectory(t *testing.T) {
 		t.Fatalf("failed to change working directory: %v", err)
 	}
 
-	builder := WebServer("test")
+	builder := NewWebServer("test")
 	builder.UseOpenAPISpecs("/v1", "openapi/v1-api.yaml", "API v1")
 
 	spec, ok := builder.specifications["API v1"]

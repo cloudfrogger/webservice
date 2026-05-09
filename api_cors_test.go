@@ -11,7 +11,7 @@ import (
 )
 
 func TestCORSPreflightAllowsClientIDHeader(t *testing.T) {
-	builder := WebServer("test").AllowOrigins("https://app.example.com")
+	builder := NewWebServer("test").AllowOrigins("https://app.example.com")
 
 	e := echo.New()
 	e.Use(echo4mw.CORSWithConfig(builder.corsConfig()))
@@ -38,7 +38,7 @@ func TestCORSPreflightAllowsClientIDHeader(t *testing.T) {
 }
 
 func TestCORSDisablesCredentialsForWildcardOrigins(t *testing.T) {
-	builder := WebServer("test")
+	builder := NewWebServer("test")
 
 	cfg := builder.corsConfig()
 	if cfg.AllowCredentials {
@@ -47,7 +47,7 @@ func TestCORSDisablesCredentialsForWildcardOrigins(t *testing.T) {
 }
 
 func TestCORSWildcardAllowsAnyOrigin(t *testing.T) {
-	builder := WebServer("test").AllowOrigins("*")
+	builder := NewWebServer("test").AllowOrigins("*")
 
 	e := echo.New()
 	e.Use(echo4mw.CORSWithConfig(builder.corsConfig()))
@@ -71,7 +71,7 @@ func TestCORSWildcardAllowsAnyOrigin(t *testing.T) {
 }
 
 func TestCORSPreflightMatchesNormalizedConfiguredOrigin(t *testing.T) {
-	builder := WebServer("test").AllowOrigins("https://app.example.com/")
+	builder := NewWebServer("test").AllowOrigins("https://app.example.com/")
 
 	e := echo.New()
 	e.Use(echo4mw.CORSWithConfig(builder.corsConfig()))

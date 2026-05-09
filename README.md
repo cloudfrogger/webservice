@@ -15,19 +15,16 @@ Features:
   - Proxy-Protocol and Cloudflare Source IP are provided in context
   - Rolevalidation from specification 
   - Correlation Injector compatible with cloudflare
- 
 
-## Quick start
-Generate the api forom an openapi yaml like so 
-```bash
-
-```
+## How to use
+Cloudfrogger.Webserver wraps the echo webserver, redis, authentication etc. into a builder pattern easy
+to use:
 
 ```golang
 import github.com/cloudfrogger/webservice
 
 func main() {
-    err := api.WebServer("Example Server").
+    err := webservice.NewWebServer("Example Server").
         RegisterHandler(func(e *echo.Echo) {
             // this is your openapi-generated handler
 			v1.RegisterHandlers(e, handlers.NewHandlerV1())
@@ -35,10 +32,36 @@ func main() {
 }
 ```
 
+## Quick start from zero
+
+Install openapi codegenerator cli
+```
+npm install @openapitools/openapi-generator-cli -g
+```
+
+Have your v1-api.yaml with OAS2 and a config in the projects openapi folder next to v1-config.yaml like so :  
+```bash
+package: v1
+output: api/v1/api.gen.go
+
+generate:
+  echo-server: true
+  models: true
+  embedded-spec: true
+
+output-options:
+  nullable-type: true
+```
+
+Generate the api 
+```
+oapi-codegen -config openapi/v1-config.yaml openapi/v1-api.yaml
+```
+
 ## Example use 
 
 ```golang
-	builder := api.WebServer(APPLICATION_NAME).
+	builder := webservice.NewWebServer(APPLICATION_NAME).
 		WithLogger(log.Logger).
 		WithCache(redisClient).
 		WithPrometheus(config.Prometheus.Enable).

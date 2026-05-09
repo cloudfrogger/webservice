@@ -67,7 +67,7 @@ var defaultCORSAllowHeaders = []string{
 	"Last-Event-ID",
 }
 
-func WebServer(appName string) *APIBuilder {
+func NewWebServer(appName string) *APIBuilder {
 	builder := &APIBuilder{
 		echo:                 echo.New(),
 		enablePrometheus:     true,
