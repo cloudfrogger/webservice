@@ -124,7 +124,7 @@ func (b *APIBuilder) registerSwaggerUIRoutes() {
 }
 
 // Run with TLS using local certificate and key files
-func (b *APIBuilder) RunLocalHttps(listenPort int, certFile interface{}, keyFile interface{}) error {
+func (b *APIBuilder) RunHttps(listenPort int, certFile interface{}, keyFile interface{}) error {
 	err := b.prepareServer(context.Background(), listenPort)
 	if err != nil {
 		return err
