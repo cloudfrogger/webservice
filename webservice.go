@@ -123,8 +123,25 @@ func (b *APIBuilder) registerSwaggerUIRoutes() {
 	})
 }
 
+// Run with TLS using local certificate and key files
+func (b *APIBuilder) RunLocalHttps(listenPort int, certFile interface{}, keyFile interface{}) error {
+	err := b.prepareServer(context.Background(), listenPort)
+	if err != nil {
+		return err
+	}
+	return b.echo.StartTLS(fmt.Sprintf(":%d", listenPort), certFile, keyFile)
+}
+
 func (b *APIBuilder) Run(listenPort int) error {
 
+	err := b.prepareServer(context.Background(), listenPort)
+	if err != nil {
+		return err
+	}
+	return b.echo.Start(fmt.Sprintf(":%d", listenPort))
+}
+
+func (b *APIBuilder) prepareServer(ctx context.Context, listenPort int) error {
 	//-- fundamental middlewares
 	b.echo.Use(SetCorrelationID())
 	b.echo.Use(SourceIP())
@@ -233,7 +250,7 @@ func (b *APIBuilder) Run(listenPort int) error {
 		}
 	}
 
-	return b.echo.Start(fmt.Sprintf(":%d", listenPort))
+	return nil
 }
 
 func (b *APIBuilder) corsConfig() echo4mw.CORSConfig {

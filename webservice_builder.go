@@ -34,7 +34,7 @@ func (b *APIBuilder) CustomGET(path string, handler echo.HandlerFunc) *APIBuilde
 	return b
 }
 
-func (b *APIBuilder) WithCache(redisClient *redis.Client) *APIBuilder {
+func (b *APIBuilder) UseRedisCache(redisClient *redis.Client) *APIBuilder {
 	b.redisCache = redisClient
 	return b
 }
@@ -196,17 +196,17 @@ func (b *APIBuilder) AddServerIf(condition bool, server string) *APIBuilder {
 	return b
 }
 
-func (b *APIBuilder) WithPrometheus(enable bool) *APIBuilder {
+func (b *APIBuilder) EnablePrometheus(enable bool) *APIBuilder {
 	b.enablePrometheus = enable
 	return b
 }
 
-func (b *APIBuilder) WithApplicationName(appName string) *APIBuilder {
+func (b *APIBuilder) SetApplicationName(appName string) *APIBuilder {
 	b.applicationName = appName
 	return b
 }
 
-func (b *APIBuilder) WithSwagger(enable bool) *APIBuilder {
+func (b *APIBuilder) EnableSwagger(enable bool) *APIBuilder {
 	b.enableSwagger = enable
 	return b
 }
