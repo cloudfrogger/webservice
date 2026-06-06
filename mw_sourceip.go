@@ -1,6 +1,7 @@
 package webservice
 
 import (
+	"net"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -23,12 +24,7 @@ func SourceIP() echo.MiddlewareFunc {
 
 				if ip == "" {
 					// Final fallback to RemoteAddr
-					ip = c.Request().RemoteAddr
-					if idx := strings.LastIndex(ip, ":"); idx != -1 {
-						ip = ip[:idx] + "/32"
-					} else {
-						ip = ip + "/32"
-					}
+					ip = remoteAddrHost(c.Request().RemoteAddr)
 				}
 			}
 
@@ -36,4 +32,13 @@ func SourceIP() echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+func remoteAddrHost(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		return host
+	}
+
+	return strings.Trim(remoteAddr, "[]")
 }

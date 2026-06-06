@@ -68,6 +68,52 @@ func TestSourceIPUsesCloudflareHeaderAndSetsContext(t *testing.T) {
 	}
 }
 
+func TestSourceIPFallsBackToRemoteAddrHost(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		want       string
+	}{
+		{
+			name:       "ipv4 host and port",
+			remoteAddr: "127.0.0.1:54321",
+			want:       "127.0.0.1",
+		},
+		{
+			name:       "ipv6 host and port",
+			remoteAddr: "[::1]:54321",
+			want:       "::1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := echo.New()
+			e.Use(SourceIP())
+			e.GET("/", func(c echo.Context) error {
+				got, ok := c.Get(ContextKey_SourceIP).(string)
+				if !ok {
+					t.Fatalf("expected %q to be set in context", ContextKey_SourceIP)
+				}
+				if got != tt.want {
+					t.Fatalf("unexpected source IP in context: got %q want %q", got, tt.want)
+				}
+				return c.NoContent(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = tt.remoteAddr
+			rec := httptest.NewRecorder()
+
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("unexpected status: got %d want %d", rec.Code, http.StatusOK)
+			}
+		})
+	}
+}
+
 func TestRateLimiterBlocksRequestsAboveThresholdForSameSourceIP(t *testing.T) {
 	const sourceIP = "203.0.113.10"
 
