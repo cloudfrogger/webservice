@@ -1,6 +1,7 @@
 package webservice
 
 import (
+	"embed"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -220,6 +221,23 @@ func (b *APIBuilder) RegisterHandler(handler func(*echo.Echo)) *APIBuilder {
 func (b *APIBuilder) OnEveryCall(handler echo.MiddlewareFunc) *APIBuilder {
 	b.additionalMiddlewares = append(b.additionalMiddlewares, handler)
 	return b
+}
+
+func (b *APIBuilder) EmbedFS(path string, webFs embed.FS) *echo.Echo {
+	b.webFS = append(b.webFS, embeddedWebFS{
+		path: path,
+		fs:   webFs,
+	})
+	return b.echo
+}
+
+// AddFilesystem adds a filesystem to be served at the given URL path
+func (b *APIBuilder) AddFilesystemPath(urlPath string, filesystemPath string) *echo.Echo {
+	b.webFS = append(b.webFS, embeddedWebFS{
+		path:           urlPath,
+		filesystemPath: filesystemPath,
+	})
+	return b.echo
 }
 
 func normalizeCORSOrigin(origin string) string {

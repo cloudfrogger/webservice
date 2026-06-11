@@ -2,6 +2,7 @@ package webservice
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -32,6 +33,12 @@ type apiSpecification struct {
 	doc      *openapi3.T
 }
 
+type embeddedWebFS struct {
+	path           string
+	fs             embed.FS
+	filesystemPath string
+}
+
 type APIBuilder struct {
 	echo                  *echo.Echo
 	redisCache            *redis.Client
@@ -53,6 +60,7 @@ type APIBuilder struct {
 	specifications        map[string]*apiSpecification
 	customAPITokenChecker CustomApiAuthentication
 	customErrorHandler    CustomErrorHandler
+	webFS                 []embeddedWebFS
 }
 
 var defaultCORSAllowHeaders = []string{
@@ -247,6 +255,15 @@ func (b *APIBuilder) prepareServer(ctx context.Context, listenPort int) error {
 			if !c.Response().Committed {
 				defaultHTTPErrorHandler(err, c)
 			}
+		}
+	}
+
+	for _, webFS := range b.webFS {
+		if webFS.filesystemPath != "" {
+			b.echo.Static(webFS.path, webFS.filesystemPath)
+		}
+		if webFS.fs != (embed.FS{}) {
+			b.echo.StaticFS(webFS.path, webFS.fs)
 		}
 	}
 
