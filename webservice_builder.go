@@ -223,21 +223,21 @@ func (b *APIBuilder) OnEveryCall(handler echo.MiddlewareFunc) *APIBuilder {
 	return b
 }
 
-func (b *APIBuilder) EmbedFS(path string, webFs embed.FS) *echo.Echo {
+func (b *APIBuilder) EmbedFS(path string, webFs embed.FS) *APIBuilder {
 	b.webFS = append(b.webFS, embeddedWebFS{
 		path: path,
 		fs:   webFs,
 	})
-	return b.echo
+	return b
 }
 
 // AddFilesystem adds a filesystem to be served at the given URL path
-func (b *APIBuilder) AddFilesystemPath(urlPath string, filesystemPath string) *echo.Echo {
+func (b *APIBuilder) AddFilesystemPath(urlPath string, filesystemPath string) *APIBuilder {
 	b.webFS = append(b.webFS, embeddedWebFS{
 		path:           urlPath,
 		filesystemPath: filesystemPath,
 	})
-	return b.echo
+	return b
 }
 
 func normalizeCORSOrigin(origin string) string {
