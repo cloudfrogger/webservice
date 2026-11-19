@@ -1,0 +1,36 @@
+openapi: 3.2.1
+info:
+  title: Catalog
+  version: 1.0.0
+paths:
+  /api/items:
+    query:
+      operationId: searchItems
+      x-public: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+      responses:
+        '204': {description: OK}
+    additionalOperations:
+      REPORT:
+        operationId: reportItems
+        x-public: true
+        x-roles: [auditor]
+        responses:
+          '204': {description: OK}
+      ARCHIVE:
+        operationId: archiveItems
+        responses:
+          '204': {description: OK}
+  /api/internal:
+    post:
+      operationId: internal
+      responses:
+        '204': {description: OK}

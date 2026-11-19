@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/labstack/echo-otel/v4"
 	"github.com/labstack/echo/v4"
 	echo4mw "github.com/labstack/echo/v4/middleware"
 	"github.com/oasdiff/yaml"
@@ -17,9 +18,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	echoSwagger "github.com/swaggo/echo-swagger"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -31,6 +29,7 @@ type CustomErrorHandler func(err error, c echo.Context)
 type apiSpecification struct {
 	basePath string
 	doc      *openapi3.T
+	loadErr  error
 }
 
 type embeddedWebFS struct {
@@ -84,7 +83,7 @@ func NewWebServer(appName string) *APIBuilder {
 		request_threshold:    -1,
 		request_window:       0,
 		allow_origins:        []string{"*"},
-		allow_methods:        []string{echo.GET, echo.POST, echo.PUT, echo.DELETE, echo.PATCH, echo.OPTIONS},
+		allow_methods:        []string{echo.GET, echo.POST, echo.PUT, echo.DELETE, echo.PATCH, echo.OPTIONS, openapi3.MethodQuery},
 		allow_headers:        []string{},
 		enableRolevalidation: false,
 		applicationName:      appName,
@@ -96,44 +95,11 @@ func NewWebServer(appName string) *APIBuilder {
 	return builder
 }
 
-func (b *APIBuilder) registerSwaggerUIRoutes() {
-	swaggerHandler := echoSwagger.EchoWrapHandler(func(cfg *echoSwagger.Config) {
-		urls := []string{}
-		for key := range b.specifications {
-			urls = append(urls, key)
-		}
-		cfg.URLs = urls
-	})
-
-	serveSwaggerUI := func(c echo.Context, targetPath string) error {
-		request := c.Request()
-		originalPath := request.URL.Path
-		originalURI := request.RequestURI
-		request.URL.Path = targetPath
-		request.RequestURI = request.URL.EscapedPath()
-		defer func() {
-			request.URL.Path = originalPath
-			request.RequestURI = originalURI
-		}()
-
-		return swaggerHandler(c)
-	}
-
-	//-- serve swagger ui directly on /swagger
-	b.echo.GET("/swagger", func(c echo.Context) error {
-		return serveSwaggerUI(c, "/swagger/index.html")
-	})
-
-	//-- make /swagger path catch everything below it
-	//-- and provide multiple specs in swagger-ui
-	b.echo.GET("/swagger/*", func(c echo.Context) error {
-		return serveSwaggerUI(c, c.Request().URL.Path)
-	})
-}
-
 // Run with TLS using local certificate and key files
 func (b *APIBuilder) RunHttps(listenPort int, certFile interface{}, keyFile interface{}) error {
-	err := b.prepareServer(context.Background(), listenPort)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := b.prepareServer(ctx, listenPort)
 	if err != nil {
 		return err
 	}
@@ -142,7 +108,9 @@ func (b *APIBuilder) RunHttps(listenPort int, certFile interface{}, keyFile inte
 
 func (b *APIBuilder) Run(listenPort int) error {
 
-	err := b.prepareServer(context.Background(), listenPort)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := b.prepareServer(ctx, listenPort)
 	if err != nil {
 		return err
 	}
@@ -150,6 +118,11 @@ func (b *APIBuilder) Run(listenPort int) error {
 }
 
 func (b *APIBuilder) prepareServer(ctx context.Context, listenPort int) error {
+	validators, err := newRequestValidators(ctx, b.specifications, b.oidcBaseURL, b.loginOIDCBaseURL, b.customAPITokenChecker, b.enableRolevalidation)
+	if err != nil {
+		return err
+	}
+
 	//-- fundamental middlewares
 	b.echo.Use(SetCorrelationID())
 	b.echo.Use(SourceIP())
@@ -165,10 +138,11 @@ func (b *APIBuilder) prepareServer(ctx context.Context, listenPort int) error {
 
 	//-- use opentelemetry
 	if b.enableOpenTelemetry {
-		b.echo.Use(otelecho.Middleware(b.applicationName,
-			otelecho.WithMeterProvider(otel.GetMeterProvider()),
-			otelecho.WithTracerProvider(otel.GetTracerProvider()),
-		))
+		telemetry, err := (echootel.Config{ServerName: b.applicationName}).ToMiddleware()
+		if err != nil {
+			return err
+		}
+		b.echo.Use(telemetry)
 
 		b.echo.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 			return func(c echo.Context) error {
@@ -228,16 +202,8 @@ func (b *APIBuilder) prepareServer(ctx context.Context, listenPort int) error {
 			})
 		}
 
-		//-- Add validation schema
-		if spec.basePath != "" {
-			b.echo.Use(AuthWithValidator(b.redisCache, spec.basePath, spec.doc, b.oidcBaseURL, b.loginOIDCBaseURL, b.customAPITokenChecker))
-			// Check x-role annotations if enabled
-			if b.enableRolevalidation {
-				b.echo.Use(RoleValidator(spec.doc))
-			}
-		}
-
 	}
+	b.echo.Use(validators...)
 
 	//-- Prometheus endpoint
 	if b.enablePrometheus {

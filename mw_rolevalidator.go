@@ -6,149 +6,47 @@ package webservice
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/getkin/kin-openapi/routers"
+	"github.com/getkin/kin-openapi/routers/gorillamux"
 	"github.com/labstack/echo/v4"
 )
 
 func RoleValidator(spec *openapi3.T) echo.MiddlewareFunc {
+	if spec == nil {
+		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
+	}
+	router, initErr := gorillamux.NewRouter(spec)
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			operation := whatOperation(c, spec)
-			if operation == nil {
+			if initErr != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError).SetInternal(initErr)
+			}
+			route, _, err := router.FindRoute(c.Request())
+			if errors.Is(err, routers.ErrPathNotFound) || errors.Is(err, routers.ErrMethodNotAllowed) {
 				return next(c)
 			}
-
-			// Rollen aus Spec
-			roles := operation.Extensions["x-roles"]
-			if roles == nil {
-				return next(c)
+			if err != nil {
+				return err
 			}
-
-			userRoles := rolesFromContext(c)
-			requiredRoles := rolesFromExtension(roles)
-			if !hasRequiredRole(userRoles, requiredRoles) {
-				return echo.NewHTTPError(http.StatusForbidden, "insufficient role")
+			if err := validateOperationRoles(c, route.Operation); err != nil {
+				return err
 			}
-
 			return next(c)
 		}
 	}
 }
 
-func whatOperation(c echo.Context, spec *openapi3.T) *openapi3.Operation {
-	if spec == nil || spec.Paths == nil {
-		return nil
+func validateOperationRoles(c echo.Context, op *openapi3.Operation) error {
+	required := rolesFromExtension(op.Extensions["x-roles"])
+	if !hasRequiredRole(rolesFromContext(c), required) {
+		return echo.NewHTTPError(http.StatusForbidden, "insufficient role")
 	}
-
-	pathTemplate := normalizePath(c.Path())
-	if pathTemplate != "" {
-		if pathItem := spec.Paths.Find(pathTemplate); pathItem != nil {
-			if op := operationForMethod(pathItem, c.Request().Method); op != nil {
-				return op
-			}
-		}
-	}
-
-	for specPath, pathItem := range spec.Paths.Map() {
-		echoPattern := specPathToEcho(specPath)
-		if echoPattern == "" {
-			continue
-		}
-		if echoPattern == c.Path() || strings.HasSuffix(c.Path(), echoPattern) {
-			if op := operationForMethod(pathItem, c.Request().Method); op != nil {
-				return op
-			}
-		}
-	}
-
 	return nil
-}
-
-func normalizePath(path string) string {
-	if path == "" {
-		return ""
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-
-	var b strings.Builder
-	for i := 0; i < len(path); i++ {
-		ch := path[i]
-		if ch == ':' {
-			start := i + 1
-			end := start
-			for end < len(path) && path[end] != '/' {
-				end++
-			}
-			if start == end {
-				continue
-			}
-			b.WriteByte('{')
-			b.WriteString(path[start:end])
-			b.WriteByte('}')
-			i = end - 1
-			continue
-		}
-		b.WriteByte(ch)
-	}
-	return b.String()
-}
-
-func specPathToEcho(path string) string {
-	if path == "" {
-		return ""
-	}
-	var b strings.Builder
-	for i := 0; i < len(path); i++ {
-		ch := path[i]
-		if ch == '{' {
-			start := i + 1
-			end := start
-			for end < len(path) && path[end] != '}' {
-				end++
-			}
-			if end >= len(path) {
-				break
-			}
-			b.WriteByte(':')
-			b.WriteString(path[start:end])
-			i = end
-			continue
-		}
-		b.WriteByte(ch)
-	}
-	return b.String()
-}
-
-func operationForMethod(pathItem *openapi3.PathItem, method string) *openapi3.Operation {
-	if pathItem == nil {
-		return nil
-	}
-
-	switch strings.ToUpper(method) {
-	case http.MethodGet:
-		return pathItem.Get
-	case http.MethodPost:
-		return pathItem.Post
-	case http.MethodPut:
-		return pathItem.Put
-	case http.MethodPatch:
-		return pathItem.Patch
-	case http.MethodDelete:
-		return pathItem.Delete
-	case http.MethodOptions:
-		return pathItem.Options
-	case http.MethodHead:
-		return pathItem.Head
-	case http.MethodTrace:
-		return pathItem.Trace
-	default:
-		return nil
-	}
 }
 
 func rolesFromContext(c echo.Context) []string {

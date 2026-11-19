@@ -1,7 +1,10 @@
 package webservice
 
 import (
+	"context"
 	"embed"
+	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,7 +15,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func (b *APIBuilder) ErrorHandler(f CustomErrorHandler) *APIBuilder {
@@ -53,7 +55,7 @@ func (b *APIBuilder) WithOpenTelemetry() *APIBuilder {
 }
 
 // WithRoleValidation enables or disables role validation middleware
-// Requires x-role annotations in OpenAPI spec
+// Requires x-roles annotations in OpenAPI spec
 func (b *APIBuilder) WithRoleValidation(enable bool) *APIBuilder {
 	b.enableRolevalidation = enable
 	return b
@@ -62,7 +64,8 @@ func (b *APIBuilder) WithRoleValidation(enable bool) *APIBuilder {
 // WithAuthentication enables OIDC authentication with the given OIDC base URL
 func (b *APIBuilder) WithAuthentication(oidcBaseURL string, loginOIDCBaseURL string) *APIBuilder {
 	b.oidcBaseURL = &oidcBaseURL
-	if oidcBaseURL != loginOIDCBaseURL {
+	b.loginOIDCBaseURL = nil
+	if loginOIDCBaseURL != "" && oidcBaseURL != loginOIDCBaseURL {
 		b.loginOIDCBaseURL = &loginOIDCBaseURL
 	}
 	return b
@@ -116,7 +119,13 @@ func (b *APIBuilder) UseOpenAPISpecs(basePath string, oapiSpecificationPath stri
 
 	doc, err := openapi3.NewLoader().LoadFromFile(resolveOpenAPISpecPath(oapiSpecificationPath))
 	if err != nil {
+		b.specifications[publicName] = &apiSpecification{loadErr: fmt.Errorf("load OpenAPI spec %q: %w", oapiSpecificationPath, err)}
 		b.logger.Error().Err(err).Msg("Failed to load OpenAPI spec")
+		return b
+	}
+
+	if err := validateOpenAPIDocument(doc); err != nil {
+		b.specifications[publicName] = &apiSpecification{loadErr: fmt.Errorf("validate OpenAPI spec %q: %w", oapiSpecificationPath, err)}
 		return b
 	}
 
@@ -128,6 +137,10 @@ func (b *APIBuilder) UseOpenAPISpecs(basePath string, oapiSpecificationPath stri
 				URL: server,
 			})
 		}
+		if err := doc.Servers.Validate(context.Background()); err != nil {
+			b.specifications[publicName] = &apiSpecification{loadErr: fmt.Errorf("validate runtime servers for %q: %w", publicName, err)}
+			return b
+		}
 	}
 
 	// Update the document title/info with the public name
@@ -137,9 +150,28 @@ func (b *APIBuilder) UseOpenAPISpecs(basePath string, oapiSpecificationPath stri
 
 	b.specifications[publicName] = &apiSpecification{
 		basePath: basePath,
-		doc:      doc, // will be loaded later
+		doc:      doc,
 	}
 	return b
+}
+
+func validateOpenAPIDocument(doc *openapi3.T) error {
+	if doc.OpenAPIMajorMinor() == "" {
+		return fmt.Errorf("unsupported OpenAPI version %q", doc.OpenAPI)
+	}
+	if err := doc.Validate(context.Background()); err != nil {
+		return err
+	}
+	if doc.Components != nil {
+		for name, scheme := range doc.Components.SecuritySchemes {
+			if value, exists := scheme.Value.Extensions[requireExpirationExtension]; exists {
+				if _, ok := value.(bool); !ok {
+					return fmt.Errorf("security scheme %q: %s must be a boolean", name, requireExpirationExtension)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (b *APIBuilder) PublicAPI(basePath string, oapiSpecificationPath string, publicName string) *APIBuilder {
@@ -148,39 +180,34 @@ func (b *APIBuilder) PublicAPI(basePath string, oapiSpecificationPath string, pu
 
 	doc := b.specifications[publicName].doc
 
-	if doc == nil {
-		log.Fatal().Msgf("Spec %s not loaded", publicName)
+	if doc == nil || doc.Paths == nil {
+		return b
 	}
 
-	// Remove paths that don't have x-public: true
-	for path, pathItem := range doc.Paths.Map() {
-		hasPublic := false
-
-		// Check all operations in the path
-		for _, op := range []*openapi3.Operation{
-			pathItem.Get, pathItem.Post, pathItem.Put,
-			pathItem.Delete, pathItem.Patch, pathItem.Head,
-			pathItem.Options, pathItem.Trace,
-		} {
-			if op != nil {
-				if xPublic, ok := op.Extensions["x-public"]; ok {
-					if public, ok := xPublic.(bool); ok && public {
-						hasPublic = true
-						break
-					}
-				}
+	for path, item := range doc.Paths.Map() {
+		if item == nil {
+			doc.Paths.Delete(path)
+			continue
+		}
+		filtered := *item
+		filtered.AdditionalOperations = maps.Clone(item.AdditionalOperations)
+		publicCount := 0
+		operations := item.Operations()
+		for method, op := range operations {
+			if public, _ := op.Extensions["x-public"].(bool); public {
+				publicCount++
+			} else {
+				filtered.SetOperation(method, nil)
 			}
 		}
-
-		// Remove path if no operation has x-public: true
-		if !hasPublic {
-			delete(doc.Paths.Map(), path)
+		switch {
+		case publicCount == 0:
+			doc.Paths.Delete(path)
+		case publicCount < len(operations):
+			// Inline a mixed path item so its $ref cannot reintroduce private operations.
+			filtered.Ref = ""
+			doc.Paths.Set(path, &filtered)
 		}
-	}
-
-	b.specifications[publicName] = &apiSpecification{
-		basePath: basePath,
-		doc:      doc,
 	}
 
 	return b

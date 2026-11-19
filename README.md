@@ -17,8 +17,8 @@ It is designed for services that already use generated OpenAPI handlers and want
 
 ## Requirements
 
-- Go `1.26+`
-- an OpenAPI 3 specification if you want request validation and generated handlers
+- Go `1.27+`
+- an OpenAPI 3.0, 3.1, or 3.2 document for request validation
 
 Install the package with:
 
@@ -56,12 +56,12 @@ go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
 Create an OpenAPI spec, for example `openapi/v1.yaml`:
 
 ```yaml
-openapi: 3.0.3
+openapi: 3.2.1
 info:
   title: Hello API
   version: 1.0.0
 paths:
-  /hello:
+  /v1/hello:
     get:
       operationId: getHello
       responses:
@@ -90,6 +90,7 @@ generate:
 Generate the code:
 
 ```bash
+mkdir -p internal/apiv1
 oapi-codegen -config openapi/v1.codegen.yaml openapi/v1.yaml
 ```
 
@@ -131,7 +132,7 @@ func main() {
 
 With the example above running:
 
-- `GET /hello` serves your handler
+- `GET /v1/hello` serves your handler
 - `GET /swagger` serves Swagger UI
 - `GET /swagger/v1.yaml` serves the YAML spec
 - `GET /swagger/v1.json` serves the JSON version of the spec
@@ -142,9 +143,9 @@ With the example above running:
 ```go
 builder := webservice.NewWebServer("my-service").
 	WithLogger(logger).
-	WithCache(redisClient).
-	WithPrometheus(true).
-	WithSwagger(true).
+	UseRedisCache(redisClient).
+	EnablePrometheus(true).
+	EnableSwagger(true).
 	WithAuthentication(oidcBaseURL, loginOIDCBaseURL).
 	ThrottleRequests(100, 10*time.Minute).
 	AllowOrigins("https://app.example.com").
@@ -176,8 +177,8 @@ The main builder methods are:
 - `WithRoleValidation(true)` enforces `x-roles` OpenAPI extensions after authentication.
 - `ThrottleRequests(limit, window)` enables per-source-IP rate limiting.
 - `AllowOrigins`, `AllowMethods`, `AllowHeaders` configure CORS.
-- `WithSwagger(bool)` enables or disables Swagger UI and published spec endpoints.
-- `WithPrometheus(bool)` enables or disables `/metrics`.
+- `EnableSwagger(bool)` enables or disables Swagger UI and published spec endpoints.
+- `EnablePrometheus(bool)` enables or disables `/metrics`.
 - `WithOpenTelemetry()` enables Echo OpenTelemetry middleware. Your application is still responsible for configuring the global OTel provider.
 - `OnEveryCall(middleware)` appends your own Echo middleware.
 - `CustomGET(path, handler)` is a convenience for adding simple routes such as `/`.
@@ -188,7 +189,7 @@ The main builder methods are:
 ### CORS
 
 - Default allowed origins: `*`
-- Default allowed methods: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`
+- Default allowed methods: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `QUERY`
 - If the effective CORS origin is `*`, credentials are disabled to keep browser behavior valid
 - Preflight `OPTIONS` requests are handled before OpenAPI auth/validation middleware
 
@@ -219,12 +220,32 @@ The selected value is exposed in the response header `X-CORRELATION-ID` and in t
 - If a Redis client is configured, Redis is used
 - Otherwise, an in-memory limiter is used
 
+### OpenAPI 3.2
+
+Register a `query` operation with `e.Add("QUERY", path, handler)`. Register a method from `additionalOperations` with the exact method name from the document. Both participate in request validation, role checks, and public API filtering. Include custom methods in `AllowMethods` for cross-origin browser requests.
+
+The request validator uses `kin-openapi`, which currently implements a subset of OAS 3.2. Its model supports `query`, `additionalOperations`, and the media type field `itemSchema`. Request validation of `in: querystring` parameters is still unsupported. [Upstream support status](https://github.com/getkin/kin-openapi/tree/v0.153.0#readme)
+
 ### Authentication And Validation
 
-- Request validation is applied only for routes whose path matches the `basePath` of a registered spec
-- If an OpenAPI operation has no security requirements, authentication is skipped
-- Browser preflight requests are skipped by the auth and validator middleware
-- Custom API key validation receives the request context, API token, and resolved source IP
+- Requests under a spec's base path are validated against that document. Base paths match full URL path segments.
+- With role validation enabled, the service checks `x-roles` on the operation selected by the request validator after authentication.
+- Operations without security requirements skip authentication. Browser preflight requests skip request validation.
+- Custom API key validation receives the request context, API token, and resolved source IP.
+- During startup, the builder validates each OpenAPI document before applying runtime overrides or filtering public operations. `Run` and `RunHttps` return configuration, OIDC discovery, and JWKS initialization errors. Each OIDC HTTP request has a 10-second timeout.
+
+A JWT with an expired `exp` claim is rejected. A JWT without `exp` is accepted by default. To require expiration for a security scheme, set the boolean extension `x-jwt-require-exp` on that scheme. Omitting the extension or setting it to `false` keeps expiration optional.
+
+```yaml
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      x-jwt-require-exp: true
+security:
+  - bearer: []
+```
 
 ## Public API Filtering
 
